@@ -1,0 +1,219 @@
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(dplyr)
+```
+
+```{r}
+canexpend<-read_excel("nhex-series-a-2023-data-tables-en.xlsx", sheet="Summary")%>%
+  rename("TotHealthExpend"="Total Health Expenditure in Millions of Dollars",
+         "TotHealthExpendPC"="Total Health Expenditure per Capita in Dollars",
+         "THEPCAdjusted"="Total Health Expenditure per Capita in Constant 1997 Dollars",
+         "GDPper"="Total Health Expenditure as a Percentage of GDP")
+  
+canexpendn<-canexpend[1:49,]
+canexpendp<-canexpend[53:100,]
+
+```
+
+```{r}
+ggplot(canexpendn,
+       mapping=aes(x=as.numeric(Year),y=as.numeric(TotHealthExpend)))+
+  geom_line(color="blue")+
+  labs(x="Year",
+       y="Total Health Expenditure (in millions of dollars)",
+       title = "Total Health Expenditure in Canada, 1975 - 2023",
+       caption = "2022 and 2023 are forecasted amounts")
+  
+
+```
+
+```{r}
+ggplot(canexpendn,
+       mapping=aes(x=as.numeric(Year),y=as.numeric(TotHealthExpendPC)))+
+  geom_line(color="red")+
+  labs(x="Year",
+       y="Total Health Expenditure per capita (in millions of dollars)",
+       title = "Total Health Expenditure Per Capita in Canada, 1975 - 2023",
+       caption = "2022 and 2023 are forecasted amounts")
+
+```
+
+```{r}
+ggplot(canexpendp,
+       mapping=aes(x=as.numeric(Year),y=as.numeric(THEPCAdjusted)))+
+  geom_line(color="forestgreen")+
+  #geom_smooth(color="forestgreen",se=FALSE)+
+  labs(x="Year",
+       y="Health Expenditure per capita (yoy % change)",
+       title = "Total yoy % change Health Expenditure Per Capita in Canada, 1975 - 2023",
+       caption = "2022 and 2023 are forecasted %")
+
+```
+
+```{r}
+ggplot(canexpendn,
+       mapping=aes(x=as.numeric(Year),y=as.numeric(THEPCAdjusted)))+
+  geom_line(color="brown")+
+  labs(x="Year",
+       y="Total Health Expenditure per capita (Constant 1997 Dollars)",
+       title = "Adjusted Total Health Expenditure per Capita in Canada, 1975 - 2023",
+       caption = "2022 and 2023 are forecasted amounts")
+
+```
+
+```{r}
+ggplot(canexpendn,
+       mapping=aes(x=as.numeric(Year),y=as.numeric(GDPper)))+
+  geom_line(color="purple")+
+  labs(x="Year",
+       y="Total Health Expenditure %",
+       title = "Total Health Expenditure as % of GDP in Canada, 1975 - 2023",
+       caption = "2022 and 2023 are forecasted amounts")
+
+```
+
+```{r}
+bd<-read_excel("nhex-series-a-2023-data-tables-en.xlsx", sheet="By sector")%>%
+  rename("pg"="Provincial Government",
+         "fd"= "Federal Direct",
+         "mg"= "Municipal Government",
+         "ssf"="Social Security Funds",
+         "public"="Public-Sector Total",
+         'private'="Private-Sector"
+         )
+bdn<-bd[1:49,]
+bda<-bd[53:101,]
+bdp<-bd[108:157,]
+bdb<-bd[216:264,]
+bde<-bd[268:315,]
+```
+
+```{r}
+
+ggplot(bda,
+       mapping=aes(x=as.numeric(Year),
+                   y=as.numeric(pg)
+                   )
+       )+
+  geom_line(stat = "identity", color="maroon")+
+  labs(x="Year",
+       #y="Total Health Expenditure per capita (Constant 1997 Dollars)",
+       title = "Adjusted Total Health Expenditure per Capita in Canada, 1975 - 2023",
+       caption = "2022 and 2023 are forecasted amounts")
+
+```
+
+```{r}
+
+ggplot(bdn,
+       mapping=aes(x=as.numeric(Year),
+                   y=as.numeric(fd)
+                   )
+       )+
+  geom_line(stat = "identity", color="red")+
+  labs(x="Year",
+       #y="Total Health Expenditure per capita (Constant 1997 Dollars)",
+       title = "Adjusted Total Health Expenditure per Capita in Canada, 1975 - 2023",
+       caption = "2022 and 2023 are forecasted amounts")
+
+```
+
+
+```{r}
+
+ggplot(bde,
+       mapping=aes(x=as.numeric(Year)
+                   )
+       )+
+  geom_smooth(aes(y=as.numeric(public)),stat = "identity", color="brown")+
+  geom_smooth(aes(y=as.numeric(private)),stat = "identity", color="forestgreen")+
+  labs(x="Year",
+       #y="Total Health Expenditure per capita (Constant 1997 Dollars)",
+       title = "Adjusted Total Health Expenditure per Capita in Canada, 1975 - 2023",
+       caption = "2022 and 2023 are forecasted amounts")
+
+```
+
+
+
+```{r}
+use<-read_excel("nhex-series-a-2023-data-tables-en.xlsx", sheet="By use — Total")%>%
+  rename("hps"="Hospitals",
+         "oi"= "Other Institutions",
+         "ot"= "Other Health Spending: Net of HR",
+         "td"="Total Drugs",
+         "ad"="Administration",
+         'phe'="Public Health",
+         'pd'='Prescribed Drugs',
+         'npd'='Non-Prescribed Drugs')
+user<- use[2:50,]
+uses<- use[52:101,]
+usss<- use[109:157,]
+```
+
+```{r}
+ggplot(usss,
+       mapping=aes(as.numeric(Year),
+                   #y=as.numeric(npd)
+                   )
+       )+
+  geom_line(aes(y=as.numeric(pd)),stat = "identity", color="red")+
+  geom_line(aes(y=as.numeric(npd)),stat = "identity", color="blue")+
+  geom_line(aes(y=as.numeric(ad)),stat = "identity", color="forestgreen")+
+  geom_line(aes(y=as.numeric(oi)),stat = "identity", color="black")+
+  geom_line(aes(y=as.numeric(ot)),stat = "identity", color="brown")+
+  geom_line(aes(y=as.numeric(hps)),stat = "identity", color="orange")+
+  geom_line(aes(y=as.numeric(phe)),stat = "identity", color="purple")
+  #geom_smooth(se=FALSE)
+  #labs(x="Year",
+       #y="Total Health Expenditure per capita (Constant 1997 Dollars)",
+       #title = "Adjusted Total Health Expenditure per Capita in Canada, 1975 - 2023",
+       #caption = "2022 and 2023 are forecasted amounts")
+
+```
+
+
+
+```{r}
+b<-read_excel("nhex-series-b-2023-data-tables-en.xlsx", sheet="Total")
+
+b1<-b[2:50,]
+b2<-b[109:157,]
+b3<-b[222:264,]
+```
+
+
+```{r}
+ggplot(b2,
+       mapping=aes(as.numeric(Year),
+                   #y=as.numeric(npd)
+                   )
+       )+
+  geom_line(aes(y=as.numeric(Alta.)),stat = "identity", color="red")+
+  #geom_line(aes(y=as.numeric(N.S.)),stat = "identity", color="blue")+
+  geom_line(aes(y=as.numeric(B.C.)),stat = "identity", color="forestgreen")+
+  #geom_line(aes(y=as.numeric(Sask.)),stat = "identity", color="orange")+
+ # geom_line(aes(y=as.numeric(Man.)),stat = "identity", color="brown")+
+  geom_line(aes(y=as.numeric(Que.)),stat = "identity", color="yellow")+
+  geom_line(aes(y=as.numeric(Ont.)),stat = "identity", color="purple")
+```
+
+
+
+```{r}
+ggplot(b2,
+       mapping=aes(as.numeric(Year),
+                   #y=as.numeric(npd)
+                   )
+       )+
+  geom_line(aes(y=as.numeric(Alta.)),stat = "identity", color="red")+
+  #geom_line(aes(y=as.numeric(N.S.)),stat = "identity", color="blue")+
+  geom_line(aes(y=as.numeric(B.C.)),stat = "identity", color="forestgreen")+
+  #geom_line(aes(y=as.numeric(Sask.)),stat = "identity", color="orange")+
+ # geom_line(aes(y=as.numeric(Man.)),stat = "identity", color="brown")+
+  geom_line(aes(y=as.numeric(Que.)),stat = "identity", color="yellow")+
+  geom_line(aes(y=as.numeric(Ont.)),stat = "identity", color="purple")
+```
+```
