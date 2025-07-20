@@ -1,0 +1,640 @@
+---
+title: "Term Project"
+author: "Benhur Tekle"
+date: "2025-03-17"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+toc: true
+---
+
+\newpage
+
+# Introduction
+
+## Objective
+
+The goal of this project is to predict future change in per-capita Total Healthcare Expenditure for each Canadian province and territory using data on the use of funds and demographics across jurisdictions. Given the rising costs of healthcare and increasing financial pressures on provincial and territorial governments, accurately forecasting future expenditures is essential for ensuring the sustainability of Canada’s healthcare system.
+
+## Economic Relevance
+
+The Canadian Institute for Health Information (CIHI) provides comprehensive look into Canada’s healthcare spending. According to CIHI, healthcare expenditures accounted for [12.4%](https://www.cihi.ca/en/national-health-expenditure-trends#Key-Findings) of Canada’s GDP in 2024, with this figure expected to grow in the coming years (CIHI, 2024). However, CIHI’s analysis primarily focuses on national trends, leaving provincial and territorial patterns under explored.
+
+As some provincial governments [deepen further](https://thoughtleadership.rbc.com/economics-articles/provincial-fiscal-analysis/provincial-budgets-and-economic-statements/) into debt to sustain rising healthcare costs, questions are raised over their long-term ability to maintain this level of expenditure without significant economic repercussions (RBC Provincial Fiscal Analysis, 2023). Understanding what future healthcare spending looks like at the provincial level is essential for effective policy planning and resource allocation.
+
+Provincial and territorial governments such as [Ontario's expenditure estimates](https://www.ontario.ca/page/expenditure-estimates-volume-1-table-contents-2024-25) typically provide fiscal forecasts based on intended spending, which is subject to change with different parties and legislation. The model in this paper uses historical data spanning from 1976-2021 to create predictions, possibly including factors not accounted for when deciding intended spending. By providing a framework that predicts future healthcare expenditures reliably across jurisdictions, policymakers can take action to ensure the financial stability of Canada’s healthcare system.
+
+## Model References
+The three models discussed in this paper are:
+
+-   The XGBoost model developed by Chen & Guestrin (2016)
+
+-   The Random Forest model developed by Breiman & Cutler (2001)
+
+-   And the widely-used Linear Regression model
+
+---
+
+# Data
+
+
+## Healthcare Spending Data
+
+The Healthcare Spending Data is sourced from the National Health Expenditure (NHEX) Database maintained by the Canadian Institute for Health Information (CIHI). CIHI is a non-profit organization that aims to provide stakeholders with information on Canadian healthcare. 
+
+Since 1975, CIHI has collected data on healthcare spending for all Canadian provinces and territories using a variety of sources, including:
+
+-   National and provincial/territorial public accounts.
+
+-   Statistics Canada documents.
+
+-   AC Nielsen Canada.
+
+-   Financial reports and private insurance companies.
+
+The original purpose of this data was to communicate the state of Canada's healthcare system to everyone who may be affected. This is done through their annual publication, *National Health Expenditure Trends*. The 28th edition, which uses this dataset, was released on November 7, 2024. The data was retrieved from the [CIHI website](https://www.cihi.ca/en/national-health-expenditure-trends). 
+
+
+
+## Population and Demographic Data
+
+The source of the population and demographic data is from  Statistics Canada . They provide annual population estimates by age and gender for Canadian provinces and territories. The estimates are drawn from the  2021 Census  and for the following years are adjusted to account for: 
+
+-   Net Undercoverage: Corrections for individuals who were missed or incorrectly counted during the census.
+
+-   Incompletely Enumerated Reserves and Settlements: Adjustments for communities where enumeration was incomplete or not conducted.
+
+The data was used in the estimation of a variety of demographic, social and economic indicators done by Statistics Canada. It has also been used by the Government of Canada to help determine future immigration levels, along with estimating the amount of federal-provincial-territorial transfers. The data was obtained  directly from the [Statistics Canada site](https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1710000501).
+
+
+## Size
+The dataset consist of 559 observations and 26 variables, split a training set of 442 observations and a holdout set of 117 observations.
+
+```{r include=FALSE, message=FALSE, warning=FALSE}
+# Load necessary packages
+library(tidyverse)
+library(readxl)
+library(fastDummies)
+library(randomForest)
+library(xgboost)
+library(kableExtra)
+
+# Define column types as numeric
+col_types_spec <- c("numeric", "numeric", "numeric", "numeric", "numeric", 
+  "numeric", "numeric", "numeric","numeric", "numeric",  "numeric", "numeric",  
+  "numeric", "numeric")
+
+# Create a list of sheet names from the raw data
+prov <- c("N.L.", "P.E.I.", "N.S.", "N.B.", "Que.", "Ont.", "Man.", "Sask.",
+        "Alta.", "B.C.", "Y.T.", "N.W.T.", "Nun.")
+
+# Create a tibble
+healthdata <- tibble()
+
+# Loop the data loading for each province sheet and combine
+for (i in prov){
+  nhex <- read_excel("nhex-series-d1-2024-data-tables-en.xlsx", sheet = i, skip = 274, 
+                  n_max = 48, col_types = col_types_spec) %>%
+    mutate(Province = i)
+  
+  healthdata<- bind_rows(healthdata, nhex)
+  }
+
+# Read in population data and rename variables and provinces
+demog_data <- read.csv("demog.csv") %>%
+  rename(Year = REF_DATE, Province = GEO) %>%
+  mutate(Province = recode(Province,
+                           "Newfoundland and Labrador" = "N.L.",
+                           "Prince Edward Island" = "P.E.I.",
+                           "Nova Scotia" = "N.S.",
+                           "New Brunswick" = "N.B.",
+                           "Quebec" = "Que.",
+                           "Ontario" = "Ont.",
+                           "Manitoba" = "Man.",
+                           "Saskatchewan" = "Sask.",
+                           "Alberta" = "Alta.",
+                           "British Columbia" = "B.C.",
+                           "Yukon" = "Y.T.",
+                           "Northwest Territories" = "N.W.T.",
+                           "Nunavut" = "Nun."
+                           ))
+# Join the datasets
+joined_data <- left_join(healthdata, demog_data, by = c("Year", "Province"))
+
+# Split training and testing datasets
+training <- joined_data %>%
+  filter(Year <= 2013)
+
+testing <- joined_data %>%
+  filter(Year >= 2013)
+
+# Create a data cleaning function
+cleaning <- function(data1){
+  #remove special characters from variable names
+  names(data1) <- gsub("[\r\n]", "", names(data1))
+  names(data1) <- gsub(" ", "_", names(data1))        
+  names(data1) <- gsub(":", "_", names(data1)) 
+  
+  data1<-data1 %>%
+    # Rename provinces again to match the standard form; rename more variables
+    mutate(Province = recode(Province,
+                             "N.L." = "NL",
+                             "P.E.I." = "PE",
+                             "N.S." = "NS",
+                             "N.B." = "NB",
+                             "Que." = "QC",
+                             "Ont." = "ON",
+                             "Man." = "MB",
+                             "Sask." = "SK",
+                             "Alta." = "AB",
+                             "B.C." = "BC",
+                             "Y.T." = "YT",
+                             "N.W.T." = "NT",
+                             "Nun." = "NU"
+                             )) %>%
+    rename(Age_Group = Age.group, Pop = VALUE) %>%
+    # Filter age groups for senior proportion calculation, filter out gender
+    # specific information, and leave out years with no data
+    filter(Age_Group %in% c("0 to 17 years", "18 to 64 years", "65 years and older"), 
+           Gender == "Total - gender", 
+           Year >= 1976,
+           Year <= 2023,
+           !(Province == "NU" & Year <= 1999),
+           !(Province == "NT" & Year <= 1990)) %>% 
+    # Calculate senior proportion
+    group_by(Year, Province) %>%
+    mutate(Ovr65 = (Pop / sum(Pop))) %>%
+    ungroup() %>%
+    filter(Age_Group == "65 years and older") %>%
+    # Select relevant variables
+    group_by(Province) %>%
+    arrange(Year) %>%
+    mutate(Total_lead = lead(Total, 1))%>%
+    select(Year, 
+           Province, 
+           Hospitals, 
+           OtherInstitutions, 
+           Physicians,
+           OtherProfessionals, 
+           Drugs, 
+           Public_Health, 
+           Administration,
+           `Other_HealthSpending_Net_of_HCC`, 
+           Capital, 
+           Ovr65,
+           Total,
+           Total_lead
+           )
+  # Store Year as an integer
+  data1$Year <- as.integer(data1$Year)
+  # Create dummy variables for each province, dropping one to avoid collinearity
+  data1 <- dummy_cols(.data = data1, select_columns = "Province", 
+                     remove_most_frequent_dummy = FALSE)
+  # Drop old province variable
+  data1 <- subset(data1, select = -c(Province))
+  
+  return(data1)
+  }
+
+# Run training and testing sets through data cleaning function
+te_data <- cleaning(training)
+
+testdata <- cleaning(testing)
+
+# Filter NA years
+te_data<-te_data%>%
+  filter(Year<=2012)
+
+testdata<-testdata%>%
+  filter(Year<=2021)
+
+
+```
+
+
+
+---
+
+# Model Selection
+
+## Target Variable
+
+We aim to predict the "Total_lead" variable, representing next year's change in per-capita healthcare expenditure in current Canadian dollars. The interest in per-capita numbers and percentage change as opposed to aggregate nominal numbers is an attempt to normalize the values across provinces, so the predictions of Nunavut are not skewed by the higher total expenditure numbers of Ontario. The  "Total_lead" variable is continuous, meaning that it can take on any values within a range, including decimals. As a result, the model chosen needs to be well-suited for continuous prediction tasks.
+
+## Model Consideration
+
+The models up for consideration are:
+
+-   Linear Regression: A simple model that will set a best-fit line is fair for a continuous prediction, and it is a good baseline for establishing relationships.
+                    
+-   XGBoost: An ensemble method that builds trees in a sequence and fixes the areas where the residuals are the largest in order to create the final model
+
+-   randomForest: Another ensemble method that takes random sub-samples of the dataset and builds trees using a certain amount of random predictor variables, and averages out all the trees to create a final model.
+
+
+## Selection Criteria
+
+The model choice will be a result of a trial run of each model, and a comparison of the  mean-squared errors (MSE) :
+
+-   Mean-squared error: The average squared difference between the true value and the values predicted from the model
+
+This criteria ensures that our predicted values are closer to the true values. We use MSE over performance metrics like a loss matrix or false positives/negatives because of the continuous nature of our variable. The other metrics would require our prediction to be "wrong" or "right", while what is relevant here is how close our predictions are to the true value of total health expenditure.
+
+The models were evaluated using 10-fold cross-validation with stratified sampling by year. The data was split into a training set (years before 2006) and a testing set (2006 and after). Within each set, 10% of each year's observations were assigned to one of 10 folds. Each fold in the test set was predicted using models trained on the remaining training folds, ensuring that only past data was used to predict future values. The average mean-squared error (MSE) across all test folds was used to compare model performance. This method is more reliable than a single train-test split, as it reduces variance and better reflects generalization performance. After running this process on OLS, randomForest, and xgboost models, we get a table comparing the MSEs.
+
+```{r include=FALSE, message=FALSE, warning=FALSE}
+# Set seed for reproducibility
+set.seed(10304)
+
+# Create model selection test and train sets
+selection_train <- te_data %>%
+  filter(Year <= 2005)
+
+selection_test <- te_data %>%
+  filter(Year >= 2006)
+
+# Initialize amount of folds
+K <- 10
+
+# Create MSE banks for each model
+ols_fold_mse <- numeric(K)
+rf_fold_mse <- numeric(K)
+xgb_fold_mse <- numeric(K)
+
+# Separate 10% of each year into 10 folds with no replacement
+selection_train1 <- selection_train %>%
+  group_by(Year) %>%
+  mutate(fold_number = sample(rep(1:K, length.out = n()))) %>%
+  ungroup()
+
+selection_test1 <- selection_test %>%
+  group_by(Year) %>%
+  mutate(fold_number = sample(rep(1:K, length.out = n()))) %>%
+  ungroup()
+```
+
+
+```{r include=FALSE, message=FALSE, warning=FALSE}
+# Set seed for reproducibility
+set.seed(10304)
+
+#Drop most frequent dummy for OLS
+ols_selection_train1 <- selection_train1 %>%
+  select(-(Province_AB))
+
+ols_selection_test1 <- selection_test1 %>%
+  select(-(Province_AB))
+
+# Loop for each fold
+for (i in 1:K){
+  # Filter out one fold
+  otherfolds <- ols_selection_train1 %>%
+    filter(fold_number != i)
+  # Run OLS model
+  mo <- lm(Total_lead ~., data = otherfolds)
+  # Choose fold filtered out of train
+  testfold <- ols_selection_test1 %>%
+    filter(fold_number == i)
+  # Predict test fold based on other fold in train
+  ols_predictions <- predict(mo, newdata = testfold)
+  
+  # Compute MSE for each fold
+  ols_actuals <- testfold$Total_lead
+  ols_fold_mse[i] <- mean((ols_predictions - ols_actuals)^2)
+  }
+# Get average OLS MSE
+ols_mse <- mean(ols_fold_mse)
+
+```
+
+
+```{r include=FALSE, message=FALSE, warning=FALSE}
+# Set seed for reproducibility
+set.seed(10304)
+
+for (i in 1:K){
+  otherfolds <- selection_train1 %>%
+    filter(fold_number != i)
+  
+  testfold <- selection_test1 %>%
+    filter(fold_number == i)
+  
+  # Run randomForest model
+  rf_model <- randomForest(
+    formula = Total_lead ~ .,
+    data = otherfolds,
+    ntree = 100,
+    mtry = 8,
+    xtest = testfold[, !(names(testfold) == "Total_lead")],
+    ytest = testfold$Total_lead
+    )
+  # Get predictions and compute fold MSE
+  predictions <- rf_model$test$predicted
+  
+  actuals <- testfold$Total_lead
+  rf_fold_mse[i] <- mean((predictions - actuals)^2)
+  }
+# Get average randomForest MSE
+rf_mse <- mean(rf_fold_mse)
+
+```
+
+
+```{r include=FALSE,message=FALSE, warning=FALSE}
+# Set seed for reproducibility
+set.seed(10304)
+
+for (i in 1:K){
+  otherfolds <- selection_train1 %>%
+    filter(fold_number != i)
+  
+  testfold <- selection_test1 %>%
+    filter(fold_number == i)
+  # Intialize x variables and y variable as matrices
+  data_matrix <- as.matrix(otherfolds %>% select(-Total_lead))
+  data_label <- as.matrix(otherfolds$Total_lead)
+  testfold_matrix <- as.matrix(testfold %>% select(-Total_lead))
+  # Run xgboost model
+  modelxgb <- xgboost(
+        data = data_matrix,
+        label = data_label,
+        max_depth = 6,
+        nrounds = 400,
+        objective = "reg:squarederror",
+      )
+  # Get predictions and compute fold MSE
+  xgb_predictions <- predict(modelxgb, newdata = testfold_matrix)
+  
+  actuals <- testfold$Total_lead
+  
+  xgb_fold_mse[i] <- mean((xgb_predictions - actuals)^2)
+  }
+# Get average xgboost MSE
+xgb_mse <- mean(xgb_fold_mse)
+
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Make MSE table to compare models
+mse_comparison <- tibble(
+  Model = c("OLS", "Random Forest", "XGBoost"),
+  MSE = c(ols_mse, rf_mse, xgb_mse)
+  )
+# Style table
+mse_comparison%>%
+  kable(caption = "Comparison Table of Different Prediction Models") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  row_spec(0, bold = TRUE, background = "#D3D3D3") 
+```
+
+We see that the randomForest model produces the lowest MSE, so we will use it to make our predictions.
+
+
+---
+
+# Model Tuning
+
+
+## Hyperparameters
+Ensemble models come with some leeway on how the prediction process occurs. The two hyperparameters of interest in the randomForest model that we will adjust are mtry and ntree
+
+
+-   mtry: The number of predictors randomly sampled as candidates for each tree. Limiting this amount below the amount of total predictors (25) forces the trees to be somewhat uncorrelated. Too low of a value would create biased predictions. The general rule around mtry is to take the amount of predictors and divide by three, in this case 25/3 = 8.33. So we will center our hyperparameter selection around this. 
+
+-   ntree: The amount of trees to create and average out. More trees will improve the prediction and lower the variance, but will take a longer time to run. 
+
+The tuning process ran the randomForest model for three values of mtry (6, 8, 10) and three values of ntree (100, 200, 300) using the same 10-fold cross-validation with stratified sampling by year. The best-performing combination was mtry = 6 and ntree = 200, which achieved the lowest average MSE across validation folds.
+
+```{r include=FALSE, message=FALSE, warning=FALSE}
+# Set seed for reproducibility
+set.seed(10304)
+# Initialize hyperparameters to test
+K_vec <- c(100,200,300)
+M_vec <- c(6,8,10)
+
+K <- K_vec[1]
+M <- M_vec[1]
+
+# Set folds
+folds <- 10
+#Make MSE matrix for hyperparameters
+Kcol <- c("ntree = 100", "ntree = 200", "ntree = 300")
+Mrows <- c("mtry = 6","mtry = 8","mtry = 10")
+MSE_matrix <- matrix(data=NA,
+                     nrow=length(M_vec),
+                     ncol=length(K_vec),
+                     dimnames = list(Mrows, Kcol))
+# Loop for mtry
+for(m in 1:length(M_vec)){
+  # Loop for ntree 
+  for (k in 1:length(K_vec)){
+    # Create MSE bank
+    tuning_fold_mse <- numeric(folds)
+    # Loop for folds
+    for (i in 1:folds){
+      # Filter out one fold
+      otherfolds <- selection_train1 %>%
+        filter(fold_number != i)
+      # Choose fold filtered out of train
+      testfold <- selection_test1 %>%
+        filter(fold_number == i)
+      # Run randomForest for each hyperparameter combination
+      forest_mk <- randomForest(
+        formula = Total_lead ~ .,
+        data = otherfolds,
+        ntree = K_vec[k],
+        mtry = M_vec[m],
+        xtest = testfold[, !(names(testfold) == "Total_lead")],
+        ytest = testfold$Total_lead
+        )
+      
+      predictions <- forest_mk$test$predicted
+      
+      actuals <- testfold$Total_lead
+      
+      tuning_fold_mse[i] <- mean((predictions - actuals)^2)
+      }
+    
+    tuning_mse <- mean(tuning_fold_mse)
+    # Add MSE to the matrix
+    MSE_matrix[m,k] <- tuning_mse
+    }
+}
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Find lowest MSE hyperparameters
+best_index <- which(MSE_matrix == min(MSE_matrix), arr.ind = TRUE)
+best_mtry <- M_vec[best_index[1]]
+best_ntree <- K_vec[best_index[2]]
+# Show MSE table
+MSE_matrix %>%
+  kable(caption = "Comparison Table of Different Hyperparamters") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))%>%
+  column_spec(1, bold = TRUE) %>% 
+  row_spec(0, bold = TRUE, background = "#D3D3D3") 
+```
+
+
+
+---
+
+# Performance
+
+## Final Prediction Model
+The best hyperparameters are used to create our final prediction model. The model is run on a training set of observations from 1976 to 2012 and is tested on a holdout set containing observations from 2012 to 2021. A final MSE is calculated, evaluating the prediction accuracy of the model.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Set seed for reproducibility
+set.seed(10304)
+# Run final randomForest model
+model_301558625 <- randomForest(
+        formula = Total_lead~.,
+        data = te_data,
+        ntree = best_ntree,
+        mtry = best_mtry,
+        xtest = testdata[, !(names(testdata) == "Total_lead")],
+        ytest = testdata$Total_lead
+        )
+# Get predictions
+final_predictions <- model_301558625$test$predicted
+# Get actual values
+holdout_actuals <- testdata$Total_lead
+# Compute final model MSE
+model_301558625_mse <- mean((final_predictions - holdout_actuals)^2)
+# Show MSE
+kable(data.frame(`Holdout MSE` = round(model_301558625_mse, 2)))
+```
+
+The final model makes 200 prediction trees each using 6 random variables to predict next year change in total health expenditure using the 1976-2012 data for training. The predictions are averaged out across all the trees and final predictions are made on the 2013-2021 data. The mean-squared error is then computed, showing the discrepancy between the predictions and the real values. Given use of funds and demographic data in the previous year, this model can be used to make data-driven predictions in changes of health expenditure in Canada. Future steps could include provincial governments comparing the change in healthcare expenditure with the rising costs in other departments and making decisions on whether the projection is fiscally sustainable.
+
+
+## Additional Figures
+Examining our model, we can show the average error rate by subtracting predictions by the actual value for each province to see where the predictions were the best and where they were the worst. We see prediction quality being the worst in BC and Quebec, and the best in Saskatchewan, Alberta, and Yukon. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Create columns for predictions and errors
+testdata$prediction<-final_predictions
+testdata$error<-final_predictions-holdout_actuals
+
+# select only columns that start with 'Province_'
+province_dummies <- testdata %>% select(starts_with("Province_"))
+# For each row, find the column name where the value is 1
+undummied_province <- apply(province_dummies, 1, function(row) {
+  colname <- names(row)[which(row == 1)]
+  if (length(colname) == 0) return(NA) 
+  sub("Province_", "", colname)
+})
+# Add province factor variable
+testdata$Province <- undummied_province
+# Compute average error rate for each province
+tab<-testdata%>%
+  select(error, Province)%>%
+  group_by(Province)%>%
+  summarise(ae=mean(error))
+# PLot average error rate
+ggplot(data=tab, aes(x=Province, y=ae)) +
+  geom_col() +
+  labs(title = "Average Prediction Error by Province",
+       x = "Province", y = "Mean Prediction Error")+
+  theme_minimal()
+
+```
+
+\newpage
+
+We can also see how the forecasting on the test set compares with the real life change in total health expenditure over the 2013-2021 period. The graph depicts relative consistency between the values early on, leading to a disparity in results in later years. A reason for this could be the COVID-19 pandemic which caused large changes in healthcare expenditure as shown in 2019-2020 for BC and more so for Quebec.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Plot prediction vs actual values of test set period
+ggplot(data=testdata) +
+  geom_line(aes(x=Year, y=prediction, color = "Prediction")) +
+  geom_line(aes(x=Year, y=Total_lead, color = "Actual")) +
+  scale_color_manual(values = c("Prediction" = "red", "Actual" = "blue")) +
+  facet_wrap(~Province, nrow = 5) +
+  labs(title = "Predicted vs Actual Change in Health Expenditure (Next Year)",
+       x = "Year", y = "Change in Expenditure")+
+  theme_minimal()+
+  scale_y_continuous(breaks = c(0, 10, 20))+
+  scale_x_continuous(breaks = c(2013, 2016, 2019))
+```
+
+---
+# Appendix
+
+## Data Dictionary
+
+Definitions are obtained from *National Health Expenditure Trends, 2024 — Methodology Notes* and *Annual Demographic Estimates: Canada, Provinces and Territories Data sources and methodology*. All variables except for Year, Province, Age_Group, and Ovr65 are numerical and measured in per-capita current Canadian dollars.
+
+
+**Year** — Integers of years ranging from 1976-2021.
+
+**Hospitals** — Institutions where patients are accommodated on the basis of medical need and are provided with continuing medical care and supporting diagnostic and therapeutic services. Hospitals are licensed or approved as hospitals by a provincial/territorial government, or are operated by the Government of Canada, and include those providing acute care, extended and chronic care, rehabilitation and convalescent care, and psychiatric care, as well as
+nursing stations or outpost hospitals.
+
+**Other Institutions** — Includes Residential care types of facilities (for the chronically ill or disabled, who reside at the institution more or less permanently) and that are approved, funded or licensed by provincial or territorial departments of health and/or social services. Residential care facilities include homes for the aged (such as nursing homes); facilities for persons with physical disabilities, developmental delays, psychiatric disabilities, and alcohol and drug problems; and facilities for emotionally disturbed children. In these facilities, a mix of health and social services is provided; health services are largely at the level of nursing care, in combination with personal care services. The medical components of care are much less intensive than those provided in hospitals. Facilities solely of a custodial or domiciliary nature and facilities for transients or delinquents are excluded.
+
+**Physicians** — Primarily professional fees paid by provincial/territorial medical care insurance plans to physicians in private practice. Fees for services rendered in hospitals are included when paid directly to physicians by the plans. Also included are other forms of professional incomes (salaries, sessional, capitation) and primary care expenditures. Physicians expenditures generally represent amounts that flow through provincial/territorial medical care plans. Provinces/territories differ in terms of what the medical care plans cover. CIHI has not attempted to make adjustments to Physicians expenditures to reflect these differences.
+
+**Other Professionals** — Services at the aggregate level represent expenditures for allied health professionals such as dentists, denturists, chiropractors, optometrists, massage therapists, osteopaths, physiotherapists, podiatrists, psychologists, nurses and naturopaths. Discrete identification of many of the professionals included under Other Professionals is often not possible. This category has been disaggregated at the Canada level in NHEX data tables to provide information on the following subcategories:
+-   Dental services — Expenditures for professional fees of dentists (includes dental assistants
+and hygienists) and denturists, as well as the cost of dental prostheses, including false teeth,
+and laboratory charges for crowns and other dental appliances.
+-   Vision care services — Expenditures for the professional services of optometrists and dispensing
+opticians, as well as expenditures for eyeglasses and contact lenses.
+-   Other — Expenditures for chiropractors, massage therapists, osteopaths, physiotherapists,
+podiatrists, psychologists, nurses, naturopaths, etc.
+
+**Drugs** — At the aggregate level, this category includes expenditures on prescribed drugs and non-prescribed products purchased in retail stores. Estimates represent the final costs to consumers including dispensing fees, markups and appropriate taxes. This category has been disaggregated at the Canada level in NHEX data tables to provide information on the following subcategories:
+-   Prescribed drugs — Substances considered to be drugs under the Food and Drugs Act and that
+are sold for human use as the result of a prescription from a health professional.
+-   Non-prescribed drugs — Include 2 subcomponents: over-the-counter drugs and personal
+health supplies.
+-   Over-the-counter drugs — Therapeutic drug products not requiring a prescription.
+-   Personal health supplies — Include items used primarily to promote or maintain health such as oral hygiene products, diagnostic items such as diabetic test strips, and medical items such as incontinence products.
+The Drugs category does not include drugs dispensed in hospitals and, generally,
+in other institutions. These are included with the category Hospitals or Other Institutions.
+
+**Public Health** — Includes expenditures for items such as food and drug safety, health inspections, health promotion activities, community mental health programs, public health nursing, measures to prevent the spread of communicable disease and occupational health to promote and enhance health and safety at the workplace. (Data is currently available for the public sector only.)
+
+**Administration** — Expenditures related to the cost of providing health insurance programs by the government and private health insurance companies and all costs to operate health departments. The administrative costs of operating hospitals, drug programs, long-term care programs and other non-insured health services are not included under the category Administration, but rather are included under the category of service, for example, Hospitals, Drugs, Physicians and Other Institutions.
+
+**Other Health Spending: Net of HCC** — At the aggregate level, includes expenditures on health research, medical transportation (ambulances), hearing aids, other appliances and prostheses, and miscellaneous health care. Some of the subcategories of the aggregate category are defined as follows:
+-   Health research: Expenditures for research activities designed to further knowledge of the determinants of health, health status or methods of providing health care, or evaluation of health care delivery or of public health programs. The category does not include research carried out by hospitals or drug companies in the course of product development.
+-   Other: Expenditures for items such as medical transportation (ambulances), hearing aids, other appliances, training of health workers and voluntary health associations. 
+
+
+**Capital** — Includes expenditures on construction, machinery and equipment, and computer software and databases of hospitals, clinics, first-aid stations and residential care facilities.
+
+**Ovr65** — Numerical; The estimated population proportion of those 65 and over; "Population" includes:
+-   Canadian citizens (by birth or by naturalization) and immigrants with a usual place of residence in Canada;
+-   Canadian citizens (by birth or by naturalization) and immigrants who are abroad, either on a military base or attached to a diplomatic mission;
+-   Canadian citizens (by birth or by naturalization) and immigrants at sea or in port aboard merchant vessels under Canadian registry or Canadian government vessels;
+-   Persons with a usual place of residence in Canada who are asylum claimants, protected persons and members of related groups;
+-   Persons with a usual place of residence in Canada who hold study permits and the family members living with them;
+-   Persons with a usual place of residence in Canada who hold work permits and the family members living with them.
+
+**Total** — Current year's change in total health expenditure.
+
+**Total_lead** — Next year's change in total health expenditure.
+
+**Province_AB to Province_YT** — indicator variables of the 13 Province/Territories of Canada, identifiable by province abbreviation.
+
+
+## References
+
+Breiman, L. Random Forests. Machine Learning 45, 5–32 (2001). https://doi.org/10.1023/A:1010933404324
+
+Chen, T., & Guestrin, C. (2016, August). Xgboost: A scalable tree boosting system. In Proceedings of the 22nd acm sigkdd international conference on knowledge discovery and data mining (pp. 785-794).
+
+Expenditure Estimates Volume 1 table of contents (2024-25). ontario.ca. (n.d.). https://www.ontario.ca/page/expenditure-estimates-volume-1-table-contents-2024-25 
+
+Government of Canada, Statistics Canada. (2024, September 25). Population estimates on July 1, by age and gender. https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1710000501 
+
+National Health Expenditure Trends. CIHI. (n.d.). https://www.cihi.ca/en/national-health-expenditure-trends 
+
+Provincial budgets and economic statements. RBC Thought Leadership. (n.d.). https://thoughtleadership.rbc.com/economics-articles/provincial-fiscal-analysis/provincial-budgets-and-economic-statements/ 
